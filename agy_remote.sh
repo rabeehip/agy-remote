@@ -42,6 +42,54 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Fix file permissions across host .gemini directory to prevent permission denied errors
+fix_permissions() {
+    if [ -d "${HOST_GEMINI_DIR}" ]; then
+        sudo chown -R "$(id -u):$(id -g)" "${HOST_GEMINI_DIR}" 2>/dev/null || true
+        sudo chmod -R 777 "${HOST_GEMINI_DIR}" 2>/dev/null || true
+    fi
+}
+
+# Pre-seed onboarding and Terms of Service acceptance to avoid blocking prompts & permission issues
+seed_onboarding() {
+    local AGY_DIR="${HOST_GEMINI_DIR}/antigravity-cli"
+    mkdir -p "${AGY_DIR}/cache" "${AGY_DIR}/log" 2>/dev/null || true
+
+    if [ ! -f "${AGY_DIR}/cache/onboarding.json" ]; then
+        cat << 'EOF' > "${AGY_DIR}/cache/onboarding.json"
+{
+  "consumerOnboardingComplete": true,
+  "enterpriseOnboardingComplete": false,
+  "onboardingComplete": true
+}
+EOF
+    fi
+
+    if [ ! -f "${AGY_DIR}/jetski_state.pbtxt" ]; then
+        cat << 'EOF' > "${AGY_DIR}/jetski_state.pbtxt"
+post_onboarding: {
+  completed_steps: POST_ONBOARDING_STEP_TYPE_MANAGER_WELCOME
+  completed_steps: POST_ONBOARDING_STEP_TYPE_USAGE_MODE
+  completed_steps: POST_ONBOARDING_STEP_TYPE_AGENT_CONFIGURATION
+  completed_steps: POST_ONBOARDING_STEP_TYPE_ADD_WORKSPACE
+}
+EOF
+    fi
+
+    if [ ! -f "${AGY_DIR}/settings.json" ]; then
+        cat << 'EOF' > "${AGY_DIR}/settings.json"
+{
+  "trustedWorkspaces": [
+    "/workspaces",
+    "/workspaces/Home"
+  ]
+}
+EOF
+    fi
+
+    fix_permissions
+}
+
 # ------------------------------------------------------------------------------
 # Command: install
 # Installs requirements, docker (if missing), builds sandbox image, and sets up /agy_remote
@@ -131,6 +179,8 @@ EOF
     sudo ln -sf "${CLI_WRAPPER}" "${CLI_ROOT_LINK}"
 
     # 6. Check Authentication Token
+    seed_onboarding
+    fix_permissions
     if [ ! -f "${HOST_GEMINI_DIR}/antigravity-cli/antigravity-oauth-token" ]; then
         echo ""
         print_warn "No Antigravity login token found at ${HOST_GEMINI_DIR}/antigravity-cli/antigravity-oauth-token"
@@ -141,6 +191,7 @@ EOF
         print_success "Existing Antigravity authentication token detected."
     fi
 
+    fix_permissions
     print_success "Installation complete! You can now run '${SCRIPT_DIR}/agy_remote.sh run' or use '/agy_remote'."
 }
 
@@ -150,6 +201,8 @@ EOF
 # ------------------------------------------------------------------------------
 do_login() {
     echo -e "${BOLD}${BLUE}=== Antigravity CLI Authentication / Login ===${NC}"
+    fix_permissions
+    seed_onboarding
     print_info "Launching interactive authentication..."
     print_info "Follow the on-screen instructions or URL to complete Google sign-in."
     echo ""
@@ -159,6 +212,7 @@ do_login() {
         # If running from inside container
         docker exec -it "${CONTAINER_NAME}" agy
     fi
+    fix_permissions
 }
 
 # ------------------------------------------------------------------------------
@@ -167,6 +221,8 @@ do_login() {
 # ------------------------------------------------------------------------------
 do_run() {
     echo -e "${BOLD}${BLUE}=== Starting AGY Remote Sandbox Container ===${NC}"
+    fix_permissions
+    seed_onboarding
     
     # Check if already running
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -217,6 +273,7 @@ do_run() {
     
     # Wait up to 5 seconds to inspect logs for remote control URL
     sleep 3
+    fix_permissions
     echo ""
     echo -e "${BOLD}${GREEN}------------------------------------------------------------${NC}"
     echo -e "${BOLD}AGY Remote Control Status:${NC}"
