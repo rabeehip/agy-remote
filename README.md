@@ -1,71 +1,111 @@
 # AGY Remote Docker Sandbox
 
-A high-privilege Docker sandbox for the Antigravity CLI (`agy`) with full host access and remote control enabled.
-
-## Features
-
-- **Host Authority & Privileges**: Runs in `--privileged` mode with host network (`--net=host`), host PID (`--pid=host`), host root filesystem (`-v /:/host`), and host Docker socket (`-v /var/run/docker.sock`).
-- **Autonomous Execution**: Runs with `--dangerously-skip-permissions` so commands and tools execute without interactive confirmation.
-- **Remote Control**: Enabled automatically (`--remote-control`), outputting a web takeover link.
-- **Global CLI Shortcut**: Use `/agy_remote` or `agy_remote` anywhere in the terminal to interact with the container.
+A high-privilege Docker sandbox for the **Google Antigravity CLI (`agy`)** designed for cloud dev environments (GitHub Codespaces, Linux VMs, and remote workstations) with full host authority, autonomous tool execution, and Remote Control enabled.
 
 ---
 
-## Quick Usage
+## ⚡ Quickstart (Fresh Codespace)
 
-### 1. Interactive Menu
-Run the script without arguments for an interactive menu:
+Get up and running in under a minute in any fresh environment:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/rabeehip/agy-remote.git
+cd agy-remote
+
+# 2. Install requirements & prepare the environment
+./agy_remote.sh install
+
+# 3. Start the sandbox (auto-prompts login if needed)
+./agy_remote.sh run
+```
+
+> **Note**: If you haven't authenticated with Google yet, `./agy_remote.sh run` automatically triggers the Google OAuth sign-in flow, saves the credentials, and immediately launches your Remote Control session.
+
+---
+
+## 🌟 Key Features
+
+- **Full Host Authority**:
+  - `--privileged` container execution.
+  - **Host Filesystem**: Mounted at `/host` (full read, write, and execute authority across the entire host).
+  - **Host Docker Daemon**: Mounted via `/var/run/docker.sock` (manage, inspect, and spawn host containers).
+  - **Host Network & PID**: `--net=host`, `--pid=host`, `--ipc=host`.
+- **Autonomous Execution (`--dangerously-skip-permissions`)**:
+  - Tool calls, bash executions, and file edits run automatically without waiting for interactive user approvals.
+- **Remote Control Daemon**:
+  - Automatically launches with `--remote-control`, generating a live web takeover link (`https://antigravity.google.com/r/...`).
+- **Zero Permission Conflicts**:
+  - Automatically manages file ownership and permissions (`chmod 777` on `~/.gemini`) so root-level background processes never lock out non-root host users.
+- **Pre-Seeded Onboarding**:
+  - Pre-configures Terms of Service acceptance and workspace trust (`/workspaces`), bypassing repetitive onboarding modals.
+- **Global CLI Shortcut**:
+  - Interactively control the sandbox from anywhere on the system via `/agy_remote` or `agy_remote`.
+
+---
+
+## 🛠️ Management Commands
+
+You can run commands directly or launch the interactive menu:
+
+### Interactive Menu
+Run without arguments to access the menu:
 ```bash
 ./agy_remote.sh
 ```
 
-### 2. Command Line Arguments
+### Command Line Options
+
+| Command | Action |
+| :--- | :--- |
+| `./agy_remote.sh install` | Installs Docker, builds the sandbox image, pre-seeds onboarding, and configures `/agy_remote`. |
+| `./agy_remote.sh login` | Triggers Google OAuth sign-in and saves credentials to host & container. |
+| `./agy_remote.sh run` | Launches the privileged container in the background and prints the Remote Control URL. |
+| `./agy_remote.sh status` | Checks container status, uptime, instance name, and prints the live Remote Control URL. |
+| `./agy_remote.sh stop` | Gracefully stops and cleans up the container. |
+| `./agy_remote.sh restart` | Restarts the container and generates a fresh connection session. |
+| `./agy_remote.sh update` | Checks for `agy` updates, rebuilds the container image, and restarts the sandbox. |
+| `./agy_remote.sh logs` | Displays the last 50 lines of logs. Add `-f` to follow live (`./agy_remote.sh logs -f`). |
+| `./agy_remote.sh shell` | Spawns an interactive root bash shell inside the container with host access. |
+| `./agy_remote.sh cli` | Runs an interactive Antigravity CLI session inside the container. |
+
+---
+
+## 💻 CLI Access (`/agy_remote`)
+
+Once installed, [`/agy_remote`](file:///agy_remote) is globally available anywhere on your machine:
+
 ```bash
-# Install dependencies, build Docker image, and set up /agy_remote
-./agy_remote.sh install
+# Open interactive AGY session inside the container
+/agy_remote
 
-# Sign-in / Authenticate with Google OAuth (run in a fresh Codespace)
-./agy_remote.sh login
+# Run autonomous tasks non-interactively
+/agy_remote -p "Run 'docker ps' and 'df -h' and summarize system state"
 
-# Start the sandbox container in the background
-./agy_remote.sh run
+# Attach directly to the running Remote Control daemon session
+/agy_remote --attach
 
-# Check sandbox status and retrieve the active Remote Control URL
-./agy_remote.sh status
-
-# Stop and remove the sandbox container
-./agy_remote.sh stop
-
-# Restart the sandbox container
-./agy_remote.sh restart
-
-# Check and update Antigravity CLI and rebuild sandbox
-./agy_remote.sh update
-
-# View sandbox logs (pass -f to follow live)
-./agy_remote.sh logs
-./agy_remote.sh logs -f
-
-# Open interactive root shell inside container with full host access
-./agy_remote.sh shell
+# Open a root shell inside the sandbox with full host privileges
+/agy_remote --shell
 ```
 
 ---
 
-## CLI Access (`/agy_remote`)
+## 🔄 Self-Healing & Permissions
 
-Once installed, you can use `/agy_remote` or `agy_remote` directly from any terminal:
+When Docker containers run as `root` with mounted host volumes, files written to `~/.gemini` can normally cause `permission denied` errors for host users. 
 
-```bash
-# Open interactive AGY session inside sandbox
-/agy_remote
+**AGY Remote automatically handles this:**
+1. **Pre-Seeded State**: Injects `onboardingComplete` and migration states into `jetski_state.pbtxt` and `cache/onboarding.json` so you never get trapped in Terms of Service onboarding prompts.
+2. **Permission Synchronization**: Before and after every action (`run`, `install`, `login`, `update`), the script synchronizes ownership and `chmod 777` permissions across `~/.gemini`.
+3. **Always-On Daemon**: Built with Docker restart policy `unless-stopped` so your session persists across machine restarts and daemon reboots.
 
-# Run a non-interactive prompt
-/agy_remote -p "ping"
+---
 
-# Attach directly to the background remote-control session
-/agy_remote --attach
+## 📂 Repository Structure
 
-# Open root bash shell with full host access
-/agy_remote --shell
-```
+- [`agy_remote.sh`](agy_remote.sh): All-in-one management script and menu.
+- [`Dockerfile`](Dockerfile): Hardened Ubuntu container with CA certificates, Docker CLI, and development tools.
+- [`docker-compose.yml`](docker-compose.yml): Privileged Docker Compose service specification.
+- [`README.md`](README.md): Documentation and operational guide.
+- [`.gitignore`](.gitignore): Clean exclusion of logs and temporary artifacts.
