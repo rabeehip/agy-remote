@@ -42,38 +42,72 @@ print_error() {
     echo -e "${RED}[ERROR]${NC} $1"
 }
 
+# Robust binary discovery for agy
+find_agy_bin() {
+    if [ -n "${HOST_AGY_BIN}" ] && [ -x "${HOST_AGY_BIN}" ]; then
+        return 0
+    fi
+    HOST_AGY_BIN="$(command -v agy 2>/dev/null || true)"
+    if [ -z "${HOST_AGY_BIN}" ]; then
+        for candidate in "${HOME}/.local/bin/agy" "/home/codespace/.local/bin/agy" "/usr/local/bin/agy" "/usr/bin/agy"; do
+            if [ -x "${candidate}" ]; then
+                HOST_AGY_BIN="${candidate}"
+                break
+            fi
+        done
+    fi
+}
+
 # Fix file permissions across host .gemini directory to prevent permission denied errors
 fix_permissions() {
     if [ -d "${HOST_GEMINI_DIR}" ]; then
         sudo chown -R "$(id -u):$(id -g)" "${HOST_GEMINI_DIR}" 2>/dev/null || true
         sudo chmod -R 777 "${HOST_GEMINI_DIR}" 2>/dev/null || true
     fi
+    if [ -d "${SCRIPT_DIR}" ]; then
+        sudo chown -R "$(id -u):$(id -g)" "${SCRIPT_DIR}" 2>/dev/null || true
+    fi
 }
 
 # Pre-seed onboarding and Terms of Service acceptance to avoid blocking prompts & permission issues
 seed_onboarding() {
     local AGY_DIR="${HOST_GEMINI_DIR}/antigravity-cli"
-    mkdir -p "${AGY_DIR}/cache" "${AGY_DIR}/log" 2>/dev/null || true
+    mkdir -p "${AGY_DIR}/cache" "${AGY_DIR}/log" "${AGY_DIR}/conversations" 2>/dev/null || true
 
-    if [ ! -f "${AGY_DIR}/cache/onboarding.json" ]; then
-        cat << 'EOF' > "${AGY_DIR}/cache/onboarding.json"
+    # Force complete onboarding flags
+    cat << 'EOF' > "${AGY_DIR}/cache/onboarding.json"
 {
   "consumerOnboardingComplete": true,
   "enterpriseOnboardingComplete": false,
   "onboardingComplete": true
 }
 EOF
-    fi
 
-    if [ ! -f "${AGY_DIR}/jetski_state.pbtxt" ]; then
-        cat << 'EOF' > "${AGY_DIR}/jetski_state.pbtxt"
+    # Force complete state and migration flags in jetski_state.pbtxt
+    cat << 'EOF' > "${AGY_DIR}/jetski_state.pbtxt"
 post_onboarding: {
   completed_steps: POST_ONBOARDING_STEP_TYPE_MANAGER_WELCOME
   completed_steps: POST_ONBOARDING_STEP_TYPE_USAGE_MODE
   completed_steps: POST_ONBOARDING_STEP_TYPE_AGENT_CONFIGURATION
   completed_steps: POST_ONBOARDING_STEP_TYPE_ADD_WORKSPACE
 }
+installation_uuid: "537c4003-1ea7-4ece-acf8-5b8459490ce9"
+migrations: {
+  key: 3
+  value: MIGRATION_STATUS_COMPLETED
+}
+migrations: {
+  key: 4
+  value: MIGRATION_STATUS_COMPLETED
+}
+migrations: {
+  key: 5
+  value: MIGRATION_STATUS_COMPLETED
+}
 EOF
+
+    if [ ! -f "${AGY_DIR}/installation_id" ]; then
+        echo "537c4003-1ea7-4ece-acf8-5b8459490ce9" > "${AGY_DIR}/installation_id"
     fi
 
     if [ ! -f "${AGY_DIR}/settings.json" ]; then
@@ -97,6 +131,11 @@ EOF
 do_install() {
     echo -e "${BOLD}${BLUE}=== Installing AGY Remote Sandbox Requirements ===${NC}"
     
+    # 0. Pre-seed Onboarding & Permissions
+    seed_onboarding
+    fix_permissions
+    find_agy_bin
+
     # 1. Check & Install Docker
     if ! command -v docker &>/dev/null; then
         print_info "Docker is not installed. Installing docker.io..."
@@ -221,8 +260,9 @@ do_login() {
 # ------------------------------------------------------------------------------
 do_run() {
     echo -e "${BOLD}${BLUE}=== Starting AGY Remote Sandbox Container ===${NC}"
-    fix_permissions
+    find_agy_bin
     seed_onboarding
+    fix_permissions
     
     # Check if already running
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -241,6 +281,20 @@ do_run() {
     if ! docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${IMAGE_NAME}$"; then
         print_warn "Image '${IMAGE_NAME}' not found. Triggering install/build..."
         do_install
+    fi
+
+    # Check if login token exists, if not, guide user through login directly
+    if [ ! -f "${HOST_GEMINI_DIR}/antigravity-cli/antigravity-oauth-token" ]; then
+        echo ""
+        print_warn "No Google Antigravity login token detected!"
+        print_info "A quick Google login is required to initialize Remote Control."
+        echo ""
+        do_login
+        fix_permissions
+        if [ ! -f "${HOST_GEMINI_DIR}/antigravity-cli/antigravity-oauth-token" ]; then
+            print_error "Login was not completed. Please authenticate to start Remote Control."
+            exit 1
+        fi
     fi
 
     # Ensure gemini settings trust target workspace
