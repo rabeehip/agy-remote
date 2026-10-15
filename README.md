@@ -39,6 +39,9 @@ Run the script without arguments for an interactive menu:
 # Restart the sandbox container
 ./agy_remote.sh restart
 
+# Check and update Antigravity CLI and rebuild sandbox
+./agy_remote.sh update
+
 # View sandbox logs (pass -f to follow live)
 ./agy_remote.sh logs
 ./agy_remote.sh logs -f

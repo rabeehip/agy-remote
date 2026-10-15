@@ -323,6 +323,35 @@ do_shell() {
 }
 
 # ------------------------------------------------------------------------------
+# Command: update
+# Updates Antigravity CLI binary and rebuilds sandbox Docker container
+# ------------------------------------------------------------------------------
+do_update() {
+    echo -e "${BOLD}${BLUE}=== Updating AGY Remote & Sandbox ===${NC}"
+    
+    # 1. Update Antigravity CLI on Host
+    print_info "Checking for Antigravity CLI updates..."
+    if [ -x "${HOST_AGY_BIN}" ]; then
+        "${HOST_AGY_BIN}" update || true
+    fi
+
+    # 2. Rebuild Docker Image if needed
+    print_info "Rebuilding Sandbox Docker image '${IMAGE_NAME}'..."
+    if [ -f "${SCRIPT_DIR}/Dockerfile" ]; then
+        docker build -t "${IMAGE_NAME}" "${SCRIPT_DIR}"
+        print_success "Docker image '${IMAGE_NAME}' is up to date."
+    fi
+
+    # 3. Restart container if currently running to apply changes
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        print_info "Container '${CONTAINER_NAME}' is running. Restarting to apply updates..."
+        do_restart
+    else
+        print_success "Update complete."
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # Command: help
 # ------------------------------------------------------------------------------
 do_help() {
@@ -338,6 +367,7 @@ do_help() {
     echo "  stop         Stop and clean up sandbox container"
     echo "  restart      Restart the sandbox container"
     echo "  logs [-f]    Display container logs (pass -f to follow)"
+    echo "  update       Update Antigravity CLI and rebuild sandbox container"
     echo "  cli [...]    Launch interactive AGY session or run command with skipped permissions"
     echo "  shell        Open root bash shell inside container with full host authority"
     echo "  help         Show this help screen"
@@ -367,11 +397,12 @@ interactive_menu() {
         echo "  6) Follow Logs (Real-time)"
         echo "  7) Open AGY CLI (/agy_remote)"
         echo "  8) Open Root Shell in Sandbox"
-        echo "  9) Stop Sandbox"
-        echo "  10) Restart Sandbox"
+        echo "  9) Update AGY & Sandbox"
+        echo "  10) Stop Sandbox"
+        echo "  11) Restart Sandbox"
         echo "  0) Exit"
         echo ""
-        read -rp "Enter choice [0-10]: " choice
+        read -rp "Enter choice [0-11]: " choice
         echo ""
         case "$choice" in
             1) do_install ;;
@@ -382,8 +413,9 @@ interactive_menu() {
             6) do_logs -f ;;
             7) do_cli ;;
             8) do_shell ;;
-            9) do_stop ;;
-            10) do_restart ;;
+            9) do_update ;;
+            10) do_stop ;;
+            11) do_restart ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
@@ -423,6 +455,10 @@ case "$1" in
     logs)
         shift
         do_logs "$@"
+        ;;
+    update)
+        shift
+        do_update "$@"
         ;;
     cli)
         shift
