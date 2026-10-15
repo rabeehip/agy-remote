@@ -1,0 +1,20 @@
+services:
+  agy_sandbox:
+    image: agy-sandbox:latest
+    container_name: agy_sandbox
+    restart: unless-stopped
+    privileged: true
+    network_mode: host
+    pid: host
+    ipc: host
+    working_dir: /workspaces/Home
+    stdin_open: true
+    tty: true
+    volumes:
+      - /:/host
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /workspaces:/workspaces
+      - /home/codespace/.gemini:/root/.gemini
+      - /home/codespace/.gemini:/home/codespace/.gemini
+      - /home/codespace/.local/bin/agy:/usr/local/bin/agy:ro
+    command: ["/usr/local/bin/agy", "--remote-control", "--dangerously-skip-permissions"]
