@@ -20,7 +20,9 @@ cd agy-remote
 ./agy_remote.sh run
 ```
 
-> **Note**: If you haven't authenticated with Google yet, `./agy_remote.sh run` automatically triggers the Google OAuth sign-in flow, saves the credentials, and immediately launches your Remote Control session.
+> **Note**: If `agy` is not already installed on the host machine, `install` automatically downloads and configures it via `curl -fsSL https://antigravity.google/cli/install.sh | bash`.
+> 
+> If you haven't authenticated with Google yet, `./agy_remote.sh run` automatically triggers the Google OAuth sign-in flow, saves the credentials, and immediately launches your Remote Control session.
 
 ---
 
@@ -39,8 +41,24 @@ cd agy-remote
   - Automatically manages file ownership and permissions (`chmod 777` on `~/.gemini`) so root-level background processes never lock out non-root host users.
 - **Pre-Seeded Onboarding**:
   - Pre-configures Terms of Service acceptance and workspace trust (`/workspaces`), bypassing repetitive onboarding modals.
+- **Automatic Self-Updating**:
+  - Built-in `update` command keeps both the host `agy` binary and the container image up to date.
 - **Global CLI Shortcut**:
   - Interactively control the sandbox from anywhere on the system via `/agy_remote` or `agy_remote`.
+
+---
+
+## 🌐 Remote Control & Web Interface
+
+When you run `./agy_remote.sh run` (or `./agy_remote.sh status`), the script displays a unique connection URL:
+
+```text
+Connect URL: https://antigravity.google.com/r/xxxx-xxxx-xxxx-xxxx
+```
+
+- **Open on Any Device**: Paste the link into any browser (laptop, phone, tablet) to take control of your Codespace agent remotely.
+- **Real-Time Code Execution**: Prompt the agent to write code, install libraries, create files, or run tests while you watch live outputs.
+- **No Extra Software Required**: The web interface connects directly through Google's secure Remote Control relay.
 
 ---
 
@@ -91,6 +109,23 @@ Once installed, [`/agy_remote`](file:///agy_remote) is globally available anywhe
 
 ---
 
+## 🐳 Docker Compose Alternative
+
+If you prefer using Docker Compose directly instead of the helper script:
+
+```bash
+# Build the sandbox image
+docker compose build
+
+# Start in detached mode
+docker compose up -d
+
+# View logs and retrieve the Remote Control link
+docker compose logs -f
+```
+
+---
+
 ## 🔄 Self-Healing & Permissions
 
 When Docker containers run as `root` with mounted host volumes, files written to `~/.gemini` can normally cause `permission denied` errors for host users. 
@@ -99,6 +134,44 @@ When Docker containers run as `root` with mounted host volumes, files written to
 1. **Pre-Seeded State**: Injects `onboardingComplete` and migration states into `jetski_state.pbtxt` and `cache/onboarding.json` so you never get trapped in Terms of Service onboarding prompts.
 2. **Permission Synchronization**: Before and after every action (`run`, `install`, `login`, `update`), the script synchronizes ownership and `chmod 777` permissions across `~/.gemini`.
 3. **Always-On Daemon**: Built with Docker restart policy `unless-stopped` so your session persists across machine restarts and daemon reboots.
+
+---
+
+## ❓ Troubleshooting & FAQs
+
+### How do I find my Remote Control URL if I close the terminal?
+Run:
+```bash
+./agy_remote.sh status
+```
+Or inspect the logs directly:
+```bash
+docker logs agy_sandbox 2>&1 | grep "https://antigravity.google.com/r/"
+```
+
+### What if my Google authentication token expires?
+Run the built-in login command:
+```bash
+./agy_remote.sh login
+```
+Then restart the container with `./agy_remote.sh restart`.
+
+### How do I update to the newest Antigravity CLI build?
+Simply run:
+```bash
+./agy_remote.sh update
+```
+This updates the binary, rebuilds the Docker container, and reloads the sandbox.
+
+---
+
+## ⚠️ Security Notice
+
+This sandbox is configured for **full authority** and **autonomous execution**:
+- It runs in `--privileged` mode with access to the host's `/` filesystem and Docker socket `/var/run/docker.sock`.
+- It executes with `--dangerously-skip-permissions`.
+
+This setup is ideal for disposable cloud developer sandboxes (like GitHub Codespaces) where you want an AI pair programmer with unrestricted capabilities, but should be used with appropriate care on shared or production systems.
 
 ---
 
