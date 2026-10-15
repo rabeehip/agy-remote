@@ -83,6 +83,8 @@ Run without arguments to access the menu:
 | `./agy_remote.sh stop` | Gracefully stops and cleans up the container. |
 | `./agy_remote.sh restart` | Restarts the container and generates a fresh connection session. |
 | `./agy_remote.sh update` | Checks for `agy` updates, rebuilds the container image, and restarts the sandbox. |
+| `./agy_remote.sh perms` | Manually synchronizes ownership and `chmod 777` permissions across `~/.gemini`. |
+| `./agy_remote.sh uninstall` | Completely removes Docker container, image, CLI wrappers, host binary, and all `~/.gemini` data without leaving a trace (add `-y` for non-interactive). |
 | `./agy_remote.sh logs` | Displays the last 50 lines of logs. Add `-f` to follow live (`./agy_remote.sh logs -f`). |
 | `./agy_remote.sh shell` | Spawns an interactive root bash shell inside the container with host access. |
 | `./agy_remote.sh cli` | Runs an interactive Antigravity CLI session inside the container. |

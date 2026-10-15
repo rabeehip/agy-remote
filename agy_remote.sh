@@ -11,8 +11,14 @@ CONTAINER_NAME="agy_sandbox"
 IMAGE_NAME="agy-sandbox:latest"
 WORKSPACE_DIR="/workspaces"
 TARGET_DIR="/workspaces/Home"
-HOST_AGY_BIN="$(which agy 2>/dev/null || echo "/home/codespace/.local/bin/agy")"
-HOST_GEMINI_DIR="${HOME}/.gemini"
+
+# Determine host user and home reliably even if running under sudo
+HOST_USER="${SUDO_USER:-${USER:-codespace}}"
+HOST_GROUP="$(id -gn "${HOST_USER}" 2>/dev/null || echo "${HOST_USER}")"
+HOST_HOME="$(getent passwd "${HOST_USER}" 2>/dev/null | cut -d: -f6)"
+[ -z "${HOST_HOME}" ] && HOST_HOME="${HOME}"
+HOST_GEMINI_DIR="${HOST_HOME}/.gemini"
+HOST_AGY_BIN="$(which agy 2>/dev/null || echo "${HOST_HOME}/.local/bin/agy")"
 CLI_WRAPPER="/usr/local/bin/agy_remote"
 CLI_ROOT_LINK="/agy_remote"
 
@@ -49,7 +55,7 @@ find_agy_bin() {
     fi
     HOST_AGY_BIN="$(command -v agy 2>/dev/null || true)"
     if [ -z "${HOST_AGY_BIN}" ]; then
-        for candidate in "${HOME}/.local/bin/agy" "/home/codespace/.local/bin/agy" "/usr/local/bin/agy" "/usr/bin/agy"; do
+        for candidate in "${HOST_HOME}/.local/bin/agy" "${HOME}/.local/bin/agy" "/home/codespace/.local/bin/agy" "/usr/local/bin/agy" "/usr/bin/agy"; do
             if [ -x "${candidate}" ]; then
                 HOST_AGY_BIN="${candidate}"
                 break
@@ -60,22 +66,26 @@ find_agy_bin() {
 
 # Fix file permissions across host .gemini directory to prevent permission denied errors
 fix_permissions() {
-    if [ -d "${HOST_GEMINI_DIR}" ]; then
-        sudo chown -R "$(id -u):$(id -g)" "${HOST_GEMINI_DIR}" 2>/dev/null || true
-        sudo chmod -R 777 "${HOST_GEMINI_DIR}" 2>/dev/null || true
-    fi
+    for target in "${HOST_GEMINI_DIR}" "${HOME}/.gemini" "/home/codespace/.gemini"; do
+        if [ -d "${target}" ]; then
+            sudo chown -R "${HOST_USER}:${HOST_GROUP}" "${target}" 2>/dev/null || true
+            sudo chmod -R 777 "${target}" 2>/dev/null || true
+        fi
+    done
     if [ -d "${SCRIPT_DIR}" ]; then
-        sudo chown -R "$(id -u):$(id -g)" "${SCRIPT_DIR}" 2>/dev/null || true
+        sudo chown -R "${HOST_USER}:${HOST_GROUP}" "${SCRIPT_DIR}" 2>/dev/null || true
     fi
 }
 
 # Pre-seed onboarding and Terms of Service acceptance to avoid blocking prompts & permission issues
 seed_onboarding() {
+    fix_permissions
     local AGY_DIR="${HOST_GEMINI_DIR}/antigravity-cli"
-    mkdir -p "${AGY_DIR}/cache" "${AGY_DIR}/log" "${AGY_DIR}/conversations" 2>/dev/null || true
+    sudo mkdir -p "${AGY_DIR}/cache" "${AGY_DIR}/log" "${AGY_DIR}/conversations" 2>/dev/null || true
+    sudo chown -R "$(id -u):$(id -g)" "${HOST_GEMINI_DIR}" 2>/dev/null || true
 
-    # Force complete onboarding flags
-    cat << 'EOF' > "${AGY_DIR}/cache/onboarding.json"
+    # Force complete onboarding flags safely with sudo tee
+    cat << 'EOF' | sudo tee "${AGY_DIR}/cache/onboarding.json" > /dev/null
 {
   "consumerOnboardingComplete": true,
   "enterpriseOnboardingComplete": false,
@@ -84,7 +94,7 @@ seed_onboarding() {
 EOF
 
     # Force complete state and migration flags in jetski_state.pbtxt
-    cat << 'EOF' > "${AGY_DIR}/jetski_state.pbtxt"
+    cat << 'EOF' | sudo tee "${AGY_DIR}/jetski_state.pbtxt" > /dev/null
 post_onboarding: {
   completed_steps: POST_ONBOARDING_STEP_TYPE_MANAGER_WELCOME
   completed_steps: POST_ONBOARDING_STEP_TYPE_USAGE_MODE
@@ -107,11 +117,11 @@ migrations: {
 EOF
 
     if [ ! -f "${AGY_DIR}/installation_id" ]; then
-        echo "537c4003-1ea7-4ece-acf8-5b8459490ce9" > "${AGY_DIR}/installation_id"
+        echo "537c4003-1ea7-4ece-acf8-5b8459490ce9" | sudo tee "${AGY_DIR}/installation_id" > /dev/null
     fi
 
     if [ ! -f "${AGY_DIR}/settings.json" ]; then
-        cat << 'EOF' > "${AGY_DIR}/settings.json"
+        cat << 'EOF' | sudo tee "${AGY_DIR}/settings.json" > /dev/null
 {
   "trustedWorkspaces": [
     "/workspaces",
@@ -132,6 +142,7 @@ do_install() {
     echo -e "${BOLD}${BLUE}=== Installing AGY Remote Sandbox Requirements ===${NC}"
     
     # 0. Pre-seed Onboarding & Permissions
+    fix_permissions
     seed_onboarding
     fix_permissions
     find_agy_bin
@@ -185,37 +196,37 @@ do_install() {
 
     # 5. Create CLI Access Wrapper Script
     print_info "Configuring CLI access at ${CLI_WRAPPER} and ${CLI_ROOT_LINK}..."
-    sudo tee "${CLI_WRAPPER}" > /dev/null << 'EOF'
+    sudo tee "${CLI_WRAPPER}" > /dev/null << EOF
 #!/usr/bin/env bash
-CONTAINER_NAME="agy_sandbox"
-SCRIPT_PATH="/workspaces/Home/AGY REMOTE/agy_remote.sh"
+CONTAINER_NAME="${CONTAINER_NAME}"
+SCRIPT_PATH="${SCRIPT_DIR}/agy_remote.sh"
 
 # Ensure container is running
-if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-    echo "[!] Sandbox container '${CONTAINER_NAME}' is not running."
+if ! docker ps --format '{{.Names}}' | grep -q "^\${CONTAINER_NAME}\$"; then
+    echo "[!] Sandbox container '\${CONTAINER_NAME}' is not running."
     echo "[*] Starting sandbox container automatically..."
-    if [ -f "${SCRIPT_PATH}" ]; then
-        bash "${SCRIPT_PATH}" run
+    if [ -f "\${SCRIPT_PATH}" ]; then
+        bash "\${SCRIPT_PATH}" run
     else
-        echo "[-] Could not find ${SCRIPT_PATH} to auto-start container."
+        echo "[-] Could not find \${SCRIPT_PATH} to auto-start container."
         exit 1
     fi
 fi
 
 # Dispatch based on arguments
-if [ $# -eq 0 ]; then
+if [ \$# -eq 0 ]; then
     # Launch interactive agy session with full permissions
-    exec docker exec -it "${CONTAINER_NAME}" agy --dangerously-skip-permissions
-elif [ "$1" = "--attach" ] || [ "$1" = "-a" ]; then
+    exec docker exec -it "\${CONTAINER_NAME}" agy --dangerously-skip-permissions
+elif [ "\$1" = "--attach" ] || [ "\$1" = "-a" ]; then
     # Attach directly to the running remote-control daemon session
     echo "[*] Attaching to live remote-control daemon session (Detach with Ctrl+P, Ctrl+Q)..."
-    exec docker attach "${CONTAINER_NAME}"
-elif [ "$1" = "--shell" ] || [ "$1" = "-s" ]; then
+    exec docker attach "\${CONTAINER_NAME}"
+elif [ "\$1" = "--shell" ] || [ "\$1" = "-s" ]; then
     # Open root bash shell with full host authority
-    exec docker exec -it "${CONTAINER_NAME}" bash
+    exec docker exec -it "\${CONTAINER_NAME}" bash
 else
     # Execute command directly with agy
-    exec docker exec -it "${CONTAINER_NAME}" agy --dangerously-skip-permissions "$@"
+    exec docker exec -it "\${CONTAINER_NAME}" agy --dangerously-skip-permissions "\$@"
 fi
 EOF
 
@@ -265,9 +276,11 @@ do_login() {
 # ------------------------------------------------------------------------------
 do_run() {
     echo -e "${BOLD}${BLUE}=== Starting AGY Remote Sandbox Container ===${NC}"
+    fix_permissions
     find_agy_bin
     seed_onboarding
     fix_permissions
+    [ -d "${TARGET_DIR}" ] || sudo mkdir -p "${TARGET_DIR}" 2>/dev/null || true
     
     # Check if already running
     if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
@@ -303,10 +316,24 @@ do_run() {
     fi
 
     # Ensure gemini settings trust target workspace
-    if [ -f "${HOST_GEMINI_DIR}/antigravity-cli/settings.json" ]; then
-        if ! grep -q "${TARGET_DIR}" "${HOST_GEMINI_DIR}/antigravity-cli/settings.json"; then
-            print_info "Adding ${TARGET_DIR} to trusted workspaces..."
-        fi
+    local SETTINGS_FILE="${HOST_GEMINI_DIR}/antigravity-cli/settings.json"
+    if [ -f "${SETTINGS_FILE}" ]; then
+        python3 -c '
+import json, sys
+p = sys.argv[1]
+targets = sys.argv[2:]
+try:
+    with open(p, "r") as f:
+        d = json.load(f)
+except Exception:
+    d = {}
+tw = d.setdefault("trustedWorkspaces", [])
+for t in targets:
+    if t not in tw:
+        tw.append(t)
+with open(p, "w") as f:
+    json.dump(d, f, indent=2)
+' "${SETTINGS_FILE}" "${TARGET_DIR}" "${WORKSPACE_DIR}" "/workspaces" 2>/dev/null || true
     fi
 
     print_info "Launching privileged sandbox container with full host authority..."
@@ -391,6 +418,7 @@ do_stop() {
     else
         print_warn "Container '${CONTAINER_NAME}' is not running."
     fi
+    fix_permissions
 }
 
 # ------------------------------------------------------------------------------
@@ -444,15 +472,13 @@ do_shell() {
 # ------------------------------------------------------------------------------
 do_update() {
     echo -e "${BOLD}${BLUE}=== Updating AGY Remote & Sandbox ===${NC}"
+    fix_permissions
     
     # 1. Update Antigravity CLI on Host
-    print_info "Checking for Antigravity CLI updates..."
-    if [ -x "${HOST_AGY_BIN}" ]; then
-        "${HOST_AGY_BIN}" update || true
-    else
-        print_info "Installing Antigravity CLI via official script..."
-        curl -fsSL https://antigravity.google/cli/install.sh | bash
-    fi
+    print_info "Updating Antigravity CLI via official install script..."
+    curl -fsSL https://antigravity.google/cli/install.sh | bash
+    export PATH="${HOME}/.local/bin:${PATH}"
+    find_agy_bin
 
     # 2. Rebuild Docker Image if needed
     print_info "Rebuilding Sandbox Docker image '${IMAGE_NAME}'..."
@@ -471,6 +497,90 @@ do_update() {
 }
 
 # ------------------------------------------------------------------------------
+# Command: uninstall
+# Completely removes the container, Docker image, CLI wrappers, host binary,
+# and all ~/.gemini configuration/credentials without leaving any trace.
+# ------------------------------------------------------------------------------
+do_uninstall() {
+    echo -e "${BOLD}${RED}=== Uninstalling Antigravity & AGY Sandbox Completely ===${NC}"
+
+    local confirm=""
+    if [ "$1" = "-y" ] || [ "$1" = "--yes" ]; then
+        confirm="y"
+    else
+        echo -e "${YELLOW}WARNING: This will permanently remove:${NC}"
+        echo "  - The '${CONTAINER_NAME}' Docker container"
+        echo "  - The '${IMAGE_NAME}' Docker image"
+        echo "  - CLI wrappers (${CLI_WRAPPER} and ${CLI_ROOT_LINK})"
+        echo "  - Host Antigravity binary (${HOST_AGY_BIN})"
+        echo "  - All configuration, cache, and OAuth credentials in ${HOST_GEMINI_DIR}"
+        echo ""
+        read -rp "Are you sure you want to proceed? [y/N]: " confirm
+    fi
+
+    case "${confirm}" in
+        [yY]|[yY][eE][sS])
+            ;;
+        *)
+            print_info "Uninstall aborted."
+            return 0
+            ;;
+    esac
+
+    # 1. Stop and remove Docker container
+    print_info "Stopping and removing Docker container '${CONTAINER_NAME}'..."
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        print_success "Container removed."
+    else
+        print_info "No container instance found."
+    fi
+
+    # 2. Remove Docker image
+    print_info "Removing Docker image '${IMAGE_NAME}'..."
+    if docker images --format '{{.Repository}}:{{.Tag}}' | grep -q "^${IMAGE_NAME}$"; then
+        docker rmi -f "${IMAGE_NAME}" >/dev/null 2>&1 || true
+        print_success "Docker image removed."
+    else
+        print_info "No Docker image found."
+    fi
+
+    # 3. Remove CLI wrappers and symlinks
+    print_info "Removing CLI wrappers (${CLI_WRAPPER}, ${CLI_ROOT_LINK})..."
+    sudo rm -f "${CLI_WRAPPER}" "${CLI_ROOT_LINK}" 2>/dev/null || true
+    print_success "CLI wrappers removed."
+
+    # 4. Remove host Antigravity CLI binary
+    print_info "Removing host Antigravity binary..."
+    find_agy_bin
+    for bin_path in "${HOST_AGY_BIN}" "${HOME}/.local/bin/agy" "/home/codespace/.local/bin/agy" "/usr/local/bin/agy" "/usr/bin/agy"; do
+        if [ -n "${bin_path}" ] && [ -f "${bin_path}" ]; then
+            sudo rm -f "${bin_path}" 2>/dev/null || rm -f "${bin_path}" 2>/dev/null || true
+            print_success "Removed binary: ${bin_path}"
+        fi
+    done
+
+    # 5. Remove all ~/.gemini data, credentials, and settings
+    print_info "Removing all ~/.gemini configuration, credentials, and caches..."
+    if [ -d "${HOST_GEMINI_DIR}" ]; then
+        sudo rm -rf "${HOST_GEMINI_DIR}" 2>/dev/null || rm -rf "${HOST_GEMINI_DIR}" 2>/dev/null || true
+        print_success "Removed: ${HOST_GEMINI_DIR}"
+    fi
+    if [ -d "/root/.gemini" ]; then
+        sudo rm -rf "/root/.gemini" 2>/dev/null || true
+    fi
+
+    # 6. Remove temporary files and logs
+    print_info "Cleaning up temporary files and logs..."
+    sudo rm -f "${SCRIPT_DIR}"/*.log 2>/dev/null || true
+    sudo rm -rf /tmp/*antigravity* /tmp/*jetski* /tmp/*agentapi* 2>/dev/null || true
+
+    echo ""
+    print_success "Antigravity CLI and AGY Sandbox have been completely uninstalled without leaving any trace!"
+}
+
+# ------------------------------------------------------------------------------
 # Command: help
 # ------------------------------------------------------------------------------
 do_help() {
@@ -479,17 +589,19 @@ do_help() {
     echo "Usage: $0 [command]"
     echo ""
     echo "Available commands:"
-    echo "  install      Install requirements, Docker image, and setup /agy_remote CLI"
-    echo "  login        Authenticate / Sign-in to Antigravity CLI via Google OAuth"
-    echo "  run | start  Start sandbox container with full host authority and remote control"
-    echo "  status       Display current container status and remote control URL"
-    echo "  stop         Stop and clean up sandbox container"
-    echo "  restart      Restart the sandbox container"
-    echo "  logs [-f]    Display container logs (pass -f to follow)"
-    echo "  update       Update Antigravity CLI and rebuild sandbox container"
-    echo "  cli [...]    Launch interactive AGY session or run command with skipped permissions"
-    echo "  shell        Open root bash shell inside container with full host authority"
-    echo "  help         Show this help screen"
+    echo "  install        Install requirements, Docker image, and setup /agy_remote CLI"
+    echo "  login          Authenticate / Sign-in to Antigravity CLI via Google OAuth"
+    echo "  run | start    Start sandbox container with full host authority and remote control"
+    echo "  status         Display current container status and remote control URL"
+    echo "  stop           Stop and clean up sandbox container"
+    echo "  restart        Restart the sandbox container"
+    echo "  logs [-f]      Display container logs (pass -f to follow)"
+    echo "  update         Update Antigravity CLI and rebuild sandbox container"
+    echo "  perms          Synchronize file ownership and permissions across ~/.gemini"
+    echo "  uninstall [-y] Completely remove container, image, CLI wrappers, binaries, and all ~/.gemini data"
+    echo "  cli [...]      Launch interactive AGY session or run command with skipped permissions"
+    echo "  shell          Open root bash shell inside container with full host authority"
+    echo "  help           Show this help screen"
     echo ""
     echo "CLI Shortcut:"
     echo "  /agy_remote         Direct CLI entrypoint anywhere on system"
@@ -519,9 +631,11 @@ interactive_menu() {
         echo "  9) Update AGY & Sandbox"
         echo "  10) Stop Sandbox"
         echo "  11) Restart Sandbox"
+        echo "  12) Fix / Synchronize Permissions (~/.gemini)"
+        echo "  13) Uninstall Completely (Clean Wipe)"
         echo "  0) Exit"
         echo ""
-        read -rp "Enter choice [0-11]: " choice
+        read -rp "Enter choice [0-13]: " choice
         echo ""
         case "$choice" in
             1) do_install ;;
@@ -535,6 +649,8 @@ interactive_menu() {
             9) do_update ;;
             10) do_stop ;;
             11) do_restart ;;
+            12) fix_permissions; print_success "Permissions synchronized successfully." ;;
+            13) do_uninstall ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
@@ -578,6 +694,14 @@ case "$1" in
     update)
         shift
         do_update "$@"
+        ;;
+    perms|fix-perms)
+        fix_permissions
+        print_success "Permissions synchronized successfully."
+        ;;
+    uninstall)
+        shift
+        do_uninstall "$@"
         ;;
     cli)
         shift
