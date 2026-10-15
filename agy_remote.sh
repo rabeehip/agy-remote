@@ -157,16 +157,21 @@ do_install() {
         fi
     fi
 
-    # 3. Verify host agy binary exists
-    if [ ! -f "${HOST_AGY_BIN}" ]; then
-        print_warn "Antigravity binary not found at default location. Looking in PATH..."
-        HOST_AGY_BIN="$(command -v agy || true)"
-        if [ -z "${HOST_AGY_BIN}" ]; then
-            print_error "Antigravity CLI ('agy') binary not found on host. Please ensure agy is installed."
+    # 3. Check & Install Antigravity CLI (agy)
+    find_agy_bin
+    if [ -z "${HOST_AGY_BIN}" ] || [ ! -f "${HOST_AGY_BIN}" ]; then
+        print_info "Antigravity CLI ('agy') not found. Installing via 'curl -fsSL https://antigravity.google/cli/install.sh | bash'..."
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
+        export PATH="${HOME}/.local/bin:${PATH}"
+        find_agy_bin
+        if [ -z "${HOST_AGY_BIN}" ] || [ ! -f "${HOST_AGY_BIN}" ]; then
+            print_error "Failed to install Antigravity CLI. Please verify internet access and retry."
             exit 1
         fi
+        print_success "Antigravity CLI installed successfully at: ${HOST_AGY_BIN}"
+    else
+        print_success "Found Antigravity CLI binary at: ${HOST_AGY_BIN}"
     fi
-    print_success "Found Antigravity CLI binary at: ${HOST_AGY_BIN}"
 
     # 4. Build Sandbox Docker Image
     print_info "Building Docker Sandbox Image '${IMAGE_NAME}'..."
@@ -444,6 +449,9 @@ do_update() {
     print_info "Checking for Antigravity CLI updates..."
     if [ -x "${HOST_AGY_BIN}" ]; then
         "${HOST_AGY_BIN}" update || true
+    else
+        print_info "Installing Antigravity CLI via official script..."
+        curl -fsSL https://antigravity.google/cli/install.sh | bash
     fi
 
     # 2. Rebuild Docker Image if needed

@@ -58,7 +58,7 @@ Run without arguments to access the menu:
 
 | Command | Action |
 | :--- | :--- |
-| `./agy_remote.sh install` | Installs Docker, builds the sandbox image, pre-seeds onboarding, and configures `/agy_remote`. |
+| `./agy_remote.sh install` | Installs Antigravity CLI via `curl -fsSL https://antigravity.google/cli/install.sh \| bash` (if missing), verifies Docker, builds the sandbox image, pre-seeds onboarding, and configures `/agy_remote`. |
 | `./agy_remote.sh login` | Triggers Google OAuth sign-in and saves credentials to host & container. |
 | `./agy_remote.sh run` | Launches the privileged container in the background and prints the Remote Control URL. |
 | `./agy_remote.sh status` | Checks container status, uptime, instance name, and prints the live Remote Control URL. |
