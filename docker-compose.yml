@@ -14,7 +14,11 @@ services:
       - /:/host
       - /var/run/docker.sock:/var/run/docker.sock
       - /workspaces:/workspaces
+      - /workspaces/.persistent_home:/root
       - /home/codespace/.gemini:/root/.gemini
       - /home/codespace/.gemini:/home/codespace/.gemini
       - /home/codespace/.local/bin/agy:/usr/local/bin/agy:ro
+    environment:
+      - PATH=/workspaces/.persistent_home/bin:/workspaces/.persistent_home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
     command: ["/usr/local/bin/agy", "--remote-control", "--dangerously-skip-permissions"]
+

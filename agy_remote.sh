@@ -10,7 +10,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_NAME="agy_sandbox"
 IMAGE_NAME="agy-sandbox:latest"
 WORKSPACE_DIR="/workspaces"
-TARGET_DIR="/workspaces/Home"
+PERSISTENT_HOME="${WORKSPACE_DIR}/.persistent_home"
+if [ -z "${TARGET_DIR}" ]; then
+    if [[ "${PWD}" == /workspaces/* && "${PWD}" != "/workspaces" ]]; then
+        TARGET_DIR="${PWD}"
+    else
+        TARGET_DIR="${WORKSPACE_DIR}/Home"
+    fi
+fi
 
 # Determine host user and home reliably even if running under sudo
 HOST_USER="${SUDO_USER:-${USER:-codespace}}"
@@ -289,10 +296,29 @@ do_run() {
         return 0
     fi
 
-    # Remove stopped container if exists
+    # Resume stopped container if exists to preserve all installed tools/packages
     if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
-        print_info "Removing stopped container instance '${CONTAINER_NAME}'..."
-        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        print_info "Resuming existing container instance '${CONTAINER_NAME}' (preserving all installed packages & tools)..."
+        docker start "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        print_success "Container '${CONTAINER_NAME}' resumed successfully."
+        print_info "Waiting for Remote Control connection link..."
+        sleep 3
+        fix_permissions
+        echo ""
+        echo -e "${BOLD}${GREEN}------------------------------------------------------------${NC}"
+        echo -e "${BOLD}AGY Remote Control Status:${NC}"
+        REMOTE_URL=$(docker logs "${CONTAINER_NAME}" 2>&1 | grep -o 'https://antigravity.google.com/r/[a-zA-Z0-9_-]*' | tail -n 1 || true)
+        HOSTNAME_VAL=$(docker logs "${CONTAINER_NAME}" 2>&1 | grep 'Hostname:' | tail -n 1 || true)
+        if [ -n "${REMOTE_URL}" ]; then
+            [ -n "${HOSTNAME_VAL}" ] && echo -e "  ${BOLD}${HOSTNAME_VAL}${NC}"
+            echo -e "  Connect URL: ${CYAN}${REMOTE_URL}${NC}"
+        else
+            echo -e "  ${YELLOW}Initializing session... Run '${CLI_ROOT_LINK}' or check logs below.${NC}"
+        fi
+        echo -e "${BOLD}${GREEN}------------------------------------------------------------${NC}"
+        echo ""
+        print_info "You can interact with AGY anytime using: ${BOLD}${CLI_ROOT_LINK}${NC} or ${BOLD}agy_remote${NC}"
+        return 0
     fi
 
     # Ensure image exists
@@ -336,7 +362,11 @@ with open(p, "w") as f:
 ' "${SETTINGS_FILE}" "${TARGET_DIR}" "${WORKSPACE_DIR}" "/workspaces" 2>/dev/null || true
     fi
 
-    print_info "Launching privileged sandbox container with full host authority..."
+    # Initialize persistent storage directories
+    sudo mkdir -p "${PERSISTENT_HOME}/bin" "${PERSISTENT_HOME}/.local/bin" "${PERSISTENT_HOME}/.config" 2>/dev/null || true
+    sudo chown -R "${HOST_USER}:${HOST_GROUP}" "${PERSISTENT_HOME}" 2>/dev/null || true
+
+    print_info "Launching privileged sandbox container with full host authority & persistent storage..."
     docker run -dt \
         --name "${CONTAINER_NAME}" \
         --restart unless-stopped \
@@ -344,15 +374,18 @@ with open(p, "w") as f:
         --net=host \
         --pid=host \
         --ipc=host \
+        -e "PATH=${PERSISTENT_HOME}/bin:${PERSISTENT_HOME}/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         -v /:/host \
         -v /var/run/docker.sock:/var/run/docker.sock \
         -v "${WORKSPACE_DIR}":"${WORKSPACE_DIR}" \
+        -v "${PERSISTENT_HOME}":/root \
         -v "${HOST_GEMINI_DIR}":/root/.gemini \
         -v "${HOST_GEMINI_DIR}":/home/codespace/.gemini \
         -v "${HOST_AGY_BIN}":/usr/local/bin/agy:ro \
         -w "${TARGET_DIR}" \
         "${IMAGE_NAME}" \
         agy --remote-control --dangerously-skip-permissions
+
 
     print_success "Container '${CONTAINER_NAME}' started successfully in background."
     print_info "Waiting for Remote Control connection link..."
@@ -411,10 +444,11 @@ do_status() {
 # ------------------------------------------------------------------------------
 do_stop() {
     echo -e "${BOLD}${YELLOW}=== Stopping AGY Remote Sandbox Container ===${NC}"
-    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-        docker rm "${CONTAINER_NAME}" >/dev/null 2>&1 || true
-        print_success "Container '${CONTAINER_NAME}' stopped and removed."
+        print_success "Container '${CONTAINER_NAME}' stopped (state and installed tools preserved)."
+    elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        print_info "Container '${CONTAINER_NAME}' is already stopped."
     else
         print_warn "Container '${CONTAINER_NAME}' is not running."
     fi
@@ -429,6 +463,21 @@ do_restart() {
     sleep 1
     do_run
 }
+
+# ------------------------------------------------------------------------------
+# Command: recreate
+# Forces removal of the container and launches a fresh container instance
+# ------------------------------------------------------------------------------
+do_recreate() {
+    echo -e "${BOLD}${YELLOW}=== Recreating AGY Remote Sandbox Container ===${NC}"
+    if docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+        docker stop "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        docker rm -f "${CONTAINER_NAME}" >/dev/null 2>&1 || true
+        print_info "Removed previous container instance '${CONTAINER_NAME}'."
+    fi
+    do_run
+}
+
 
 # ------------------------------------------------------------------------------
 # Command: logs
@@ -593,8 +642,9 @@ do_help() {
     echo "  login          Authenticate / Sign-in to Antigravity CLI via Google OAuth"
     echo "  run | start    Start sandbox container with full host authority and remote control"
     echo "  status         Display current container status and remote control URL"
-    echo "  stop           Stop and clean up sandbox container"
-    echo "  restart        Restart the sandbox container"
+    echo "  stop           Stop the sandbox container (state preserved)"
+    echo "  restart        Restart the sandbox container (state preserved)"
+    echo "  recreate       Force remove and recreate a fresh container instance"
     echo "  logs [-f]      Display container logs (pass -f to follow)"
     echo "  update         Update Antigravity CLI and rebuild sandbox container"
     echo "  perms          Synchronize file ownership and permissions across ~/.gemini"
@@ -629,13 +679,14 @@ interactive_menu() {
         echo "  7) Open AGY CLI (/agy_remote)"
         echo "  8) Open Root Shell in Sandbox"
         echo "  9) Update AGY & Sandbox"
-        echo "  10) Stop Sandbox"
+        echo "  10) Stop Sandbox (Preserve State)"
         echo "  11) Restart Sandbox"
-        echo "  12) Fix / Synchronize Permissions (~/.gemini)"
-        echo "  13) Uninstall Completely (Clean Wipe)"
+        echo "  12) Recreate Sandbox (Fresh Instance)"
+        echo "  13) Fix / Synchronize Permissions (~/.gemini)"
+        echo "  14) Uninstall Completely (Clean Wipe)"
         echo "  0) Exit"
         echo ""
-        read -rp "Enter choice [0-13]: " choice
+        read -rp "Enter choice [0-14]: " choice
         echo ""
         case "$choice" in
             1) do_install ;;
@@ -649,8 +700,9 @@ interactive_menu() {
             9) do_update ;;
             10) do_stop ;;
             11) do_restart ;;
-            12) fix_permissions; print_success "Permissions synchronized successfully." ;;
-            13) do_uninstall ;;
+            12) do_recreate ;;
+            13) fix_permissions; print_success "Permissions synchronized successfully." ;;
+            14) do_uninstall ;;
             0) exit 0 ;;
             *) echo -e "${RED}Invalid option.${NC}" ;;
         esac
@@ -687,6 +739,11 @@ case "$1" in
         shift
         do_restart "$@"
         ;;
+    recreate)
+        shift
+        do_recreate "$@"
+        ;;
+
     logs)
         shift
         do_logs "$@"
