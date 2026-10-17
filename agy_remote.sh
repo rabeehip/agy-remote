@@ -364,6 +364,10 @@ with open(p, "w") as f:
 
     # Initialize persistent storage directories
     sudo mkdir -p "${PERSISTENT_HOME}/bin" "${PERSISTENT_HOME}/.local/bin" "${PERSISTENT_HOME}/.config" 2>/dev/null || true
+    if [ -x "${HOST_AGY_BIN}" ]; then
+        sudo cp -f "${HOST_AGY_BIN}" "${PERSISTENT_HOME}/bin/agy" 2>/dev/null || true
+        sudo chmod +x "${PERSISTENT_HOME}/bin/agy" 2>/dev/null || true
+    fi
     sudo chown -R "${HOST_USER}:${HOST_GROUP}" "${PERSISTENT_HOME}" 2>/dev/null || true
 
     print_info "Launching privileged sandbox container with full host authority & persistent storage..."
@@ -381,7 +385,6 @@ with open(p, "w") as f:
         -v "${PERSISTENT_HOME}":/root \
         -v "${HOST_GEMINI_DIR}":/root/.gemini \
         -v "${HOST_GEMINI_DIR}":/home/codespace/.gemini \
-        -v "${HOST_AGY_BIN}":/usr/local/bin/agy:ro \
         -w "${TARGET_DIR}" \
         "${IMAGE_NAME}" \
         agy --remote-control --dangerously-skip-permissions
@@ -528,6 +531,15 @@ do_update() {
     curl -fsSL https://antigravity.google/cli/install.sh | bash
     export PATH="${HOME}/.local/bin:${PATH}"
     find_agy_bin
+
+    # Sync updated binary to persistent container bin paths
+    if [ -x "${HOST_AGY_BIN}" ]; then
+        sudo mkdir -p "${PERSISTENT_HOME}/bin" "${HOST_GEMINI_DIR}/antigravity-cli/bin" 2>/dev/null || true
+        sudo cp -f "${HOST_AGY_BIN}" "${PERSISTENT_HOME}/bin/agy" 2>/dev/null || true
+        sudo cp -f "${HOST_AGY_BIN}" "${HOST_GEMINI_DIR}/antigravity-cli/bin/agy" 2>/dev/null || true
+        sudo chmod +x "${PERSISTENT_HOME}/bin/agy" "${HOST_GEMINI_DIR}/antigravity-cli/bin/agy" 2>/dev/null || true
+        print_success "Synced updated Antigravity binary to persistent paths."
+    fi
 
     # 2. Rebuild Docker Image if needed
     print_info "Rebuilding Sandbox Docker image '${IMAGE_NAME}'..."
